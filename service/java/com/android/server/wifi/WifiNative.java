@@ -574,7 +574,7 @@ public class WifiNative {
        // if (mSuspendOptEnabled == enabled) return true;
         mSuspendOptEnabled = enabled;
 
-        Log.e("native", "do suspend " + enabled);
+        if (DBG) Log.d("native", "do suspend " + enabled);
         if (enabled) {
             return doBooleanCommand("DRIVER SETSUSPENDMODE 1");
         } else {
@@ -588,10 +588,10 @@ public class WifiNative {
 
     public boolean enableBackgroundScan(boolean enable) {
         if (enable) {
-            Log.e(mTAG, "doBoolean: enable");
+            if (DBG) Log.d(mTAG, "doBoolean: enable");
             return doBooleanCommand("SET pno 1");
         } else {
-            Log.e(mTAG, "doBoolean: disable");
+            if (DBG) Log.d(mTAG, "doBoolean: disable");
             return doBooleanCommand("SET pno 0");
         }
     }
@@ -651,6 +651,14 @@ public class WifiNative {
         }
     }
 
+    public boolean startWpsPbc(String bssid, int priority) {
+        if (TextUtils.isEmpty(bssid)) {
+            return doBooleanCommand("WPS_PBC" + " prio=" + priority);
+        } else {
+            return doBooleanCommand("WPS_PBC " + bssid + " prio=" + priority);
+        }
+    }
+
     public boolean startWpsPbc(String iface, String bssid) {
         synchronized (mLock) {
             if (TextUtils.isEmpty(bssid)) {
@@ -679,6 +687,14 @@ public class WifiNative {
             return doStringCommand("WPS_PIN any");
         } else {
             return doStringCommand("WPS_PIN " + bssid);
+        }
+    }
+
+    public String startWpsPinDisplay(String bssid, int priority) {
+        if (TextUtils.isEmpty(bssid)) {
+            return doStringCommand("WPS_PIN any" + " prio=" + priority);
+        } else {
+            return doStringCommand("WPS_PIN " + bssid + " prio=" + priority);
         }
     }
 

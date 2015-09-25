@@ -282,8 +282,6 @@ public class WifiConfigStore extends IpConfigStore {
             = "ASSOCIATED_FULL_SCAN_BACKOFF_PERIOD:   ";
     private static final String ALWAYS_ENABLE_SCAN_WHILE_ASSOCIATED_KEY
             = "ALWAYS_ENABLE_SCAN_WHILE_ASSOCIATED:   ";
-    private static final String AUTO_JOIN_SCAN_INTERVAL_WHEN_P2P_CONNECTED_KEY
-            = "AUTO_JOIN_SCAN_INTERVAL_WHEN_P2P_CONNECTED:   ";
     private static final String ONLY_LINK_SAME_CREDENTIAL_CONFIGURATIONS_KEY
             = "ONLY_LINK_SAME_CREDENTIAL_CONFIGURATIONS:   ";
 
@@ -344,10 +342,6 @@ public class WifiConfigStore extends IpConfigStore {
 
     public int associatedPartialScanPeriodMilli;
 
-    // Sane value for roam blacklisting (not switching to a network if already associated)
-    // 2 days
-    public int networkSwitchingBlackListPeriodMilli = 2 * 24 * 60 * 60 * 1000;
-
     public int bandPreferenceBoostFactor5 = 5; // Boost by 5 dB per dB above threshold
     public int bandPreferencePenaltyFactor5 = 2; // Penalize by 2 dB per dB below threshold
     public int bandPreferencePenaltyThreshold5 = WifiConfiguration.G_BAND_PREFERENCE_RSSI_THRESHOLD;
@@ -381,7 +375,6 @@ public class WifiConfigStore extends IpConfigStore {
     boolean showNetworks = true; // TODO set this back to false, used for debugging 17516271
 
     public int alwaysEnableScansWhileAssociated = 0;
-    public int autoJoinScanIntervalWhenP2pConnected = 300000;
 
     public int maxNumActiveChannelsForPartialScans = 6;
     public int maxNumPassiveChannelsForPartialScans = 2;
@@ -557,9 +550,6 @@ public class WifiConfigStore extends IpConfigStore {
 
         scanResultRssiLevelPatchUp = mContext.getResources().getInteger(
                 R.integer.config_wifi_framework_scan_result_rssi_level_patchup_value);
-
-        networkSwitchingBlackListPeriodMilli = mContext.getResources().getInteger(
-                R.integer.config_wifi_network_switching_blacklist_time);
     }
 
     void enableVerboseLogging(int verbose) {
@@ -958,19 +948,6 @@ public class WifiConfigStore extends IpConfigStore {
         }
     }
 
-    void noteRoamingFailure(WifiConfiguration config, int reason) {
-        if (config == null) return;
-        config.lastRoamingFailure = System.currentTimeMillis();
-        config.roamingFailureBlackListTimeMilli
-                = 2 * (config.roamingFailureBlackListTimeMilli + 1000);
-        if (config.roamingFailureBlackListTimeMilli
-                > networkSwitchingBlackListPeriodMilli) {
-            config.roamingFailureBlackListTimeMilli =
-                    networkSwitchingBlackListPeriodMilli;
-        }
-        config.lastRoamingFailureReason = reason;
-    }
-
     void saveWifiConfigBSSID(WifiConfiguration config) {
         // Sanity check the config is valid
         if (config == null || (config.networkId == INVALID_NETWORK_ID &&
@@ -1317,7 +1294,11 @@ public class WifiConfigStore extends IpConfigStore {
      */
     WpsResult startWpsWithPinFromDevice(WpsInfo config) {
         WpsResult result = new WpsResult();
-        result.pin = mWifiNative.startWpsPinDisplay(config.BSSID);
+        if (mLastPriority == -1 || mLastPriority > 1000000) {
+            resetNetworkPriority();
+        }
+        result.pin = mWifiNative.startWpsPinDisplay(config.BSSID,
+                ++mLastPriority);
         /* WPS leaves all networks disabled */
         if (!TextUtils.isEmpty(result.pin)) {
             markAllNetworksDisabled();
@@ -1336,7 +1317,11 @@ public class WifiConfigStore extends IpConfigStore {
      */
     WpsResult startWpsPbc(WpsInfo config) {
         WpsResult result = new WpsResult();
-        if (mWifiNative.startWpsPbc(config.BSSID)) {
+        if (mLastPriority == -1 || mLastPriority > 1000000) {
+            resetNetworkPriority();
+        }
+
+        if (mWifiNative.startWpsPbc(config.BSSID, ++mLastPriority)) {
             /* WPS leaves all networks disabled */
             markAllNetworksDisabled();
             result.status = WpsResult.Status.SUCCESS;
@@ -2620,31 +2605,6 @@ public class WifiConfigStore extends IpConfigStore {
                                 + Integer.toString(maxNumActiveChannelsForPartialScans));
                     } catch (NumberFormatException e) {
                         Log.d(TAG,"readAutoJoinConfig: incorrect format :" + key);
-                    }
-                }
-                if (key.startsWith(
-                    AUTO_JOIN_SCAN_INTERVAL_WHEN_P2P_CONNECTED_KEY)) {
-                    int scanInterval;
-                    String st = key.replace(
-                                AUTO_JOIN_SCAN_INTERVAL_WHEN_P2P_CONNECTED_KEY,
-                                "");
-                    st = st.replace(SEPARATOR_KEY, "");
-                    try {
-                        scanInterval = Integer.parseInt(st);
-                        if (scanInterval >= 10000) {
-                            autoJoinScanIntervalWhenP2pConnected = scanInterval;
-                        } else {
-                            Log.d(TAG,
-                                  "Cfg value is less then 10sec, Using default="
-                                  + autoJoinScanIntervalWhenP2pConnected);
-                        }
-                        Log.d(TAG, "readAutoJoinConfig: " +
-                              "autoJoinScanIntervalWhenP2pConnected = "
-                              + Integer.toString(
-                              autoJoinScanIntervalWhenP2pConnected));
-                    } catch (NumberFormatException e) {
-                        Log.d(TAG, "readAutoJoinConfig: incorrect format :" +
-                              key);
                     }
                 }
             }
@@ -4360,6 +4320,16 @@ public class WifiConfigStore extends IpConfigStore {
         } catch (CertificateException e2) {
             return false;
         }
+    }
+
+    private void resetNetworkPriority() {
+        for(WifiConfiguration config : mConfiguredNetworks.values()) {
+            if (config.networkId != INVALID_NETWORK_ID) {
+                config.priority = 0;
+                addOrUpdateNetworkNative(config, -1);
+            }
+        }
+        mLastPriority = 0;
     }
 
     void removeKeys(WifiEnterpriseConfig config) {
